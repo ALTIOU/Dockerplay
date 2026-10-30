@@ -1,60 +1,51 @@
-# 一键把DockerHub镜像搬运到GitHub 容器注册表 (GHCR.IO)
+# Dockerplay
 
-## 项目简介
+通过 GitHub Actions 手动把 DockerHub 镜像复制到当前仓库所有者的 GitHub 容器注册表（GHCR）。不需要保存 DockerHub 密码或个人访问令牌。
 
-本项目通过 GitHub Actions **自动将DockerHub镜像搬运到GitHub容器注册表 (GHCR.IO)**，避免镜像被封禁或撤回，确保你的镜像资源安全可靠。  
-你可以免费使用 GitHub 提供的 **每月 2000 分钟**的私有仓库运行时长，或者使用公有仓库，享受**无限制的运行时长**。同时，配合 **南京大学开源镜像站**，加速国内拉取 GHCR.IO 镜像的速度。
+## 使用
 
-## 使用步骤
+1. Fork 或克隆本仓库到自己的 GitHub 账号。如果使用 Fork，先在 **Actions** 页面启用工作流。
+2. 打开 **Actions → 将 DockerHub 镜像复制到 GHCR → Run workflow**。
+3. 填写参数并运行：
 
-### 1. 克隆项目到你的 GitHub 仓库
+| 参数 | 示例 | 说明 |
+| --- | --- | --- |
+| `dockerhub_image` | `nginx` 或 `library/nginx` | DockerHub 镜像名，不含标签；使用小写 |
+| `tag` | `latest` 或 `1.27-alpine` | 源和目标使用同一标签；留空时为 `latest` |
+| `ghcr_image` | `my-nginx` | 目标镜像名；会转换为小写 |
 
-请不要使用 Fork！因为 Fork 仓库运行 GitHub Actions 会受到运行时长限制。使用以下方法通过 Git 导入项目：
+工作流会生成如下目标地址。命名空间使用仓库所有者，不随触发工作流的协作者变化：
 
-1. 点击此链接进入 GitHub 的导入页面：[GitHub 导入页面](https://github.com/new/import)
-2. 在 "Your old repository’s clone URL" 一栏中输入：  
-   ```
-   https://github.com/foss-android/dockerhub2ghcr.io.git
-   ```
-3. 根据提示完成项目导入。
-
-### 2. 手动触发 GitHub Actions
-
-#### 步骤：
-
-1. 进入你的 GitHub 仓库，在页面顶部找到并点击 “**Actions**” 选项卡。
-
-2. 在左侧栏中，找到 "**DockerHub 镜像复制到 GHCR.IO**" 的工作流名称，点击它。
-
-3. 在右上角点击 "**Run workflow**" 按钮（运行工作流）。这将会弹出参数输入框。
-
-4. 你需要在弹出的输入框中填写以下参数：
-   - **dockerhub_image**：DockerHub 镜像名称（默认是 `nginx`），如 `alpine` 或 `python`。
-   - **tag**：镜像的标签，默认是 `latest`。可以填写 `1.19` 或其他指定版本。
-   - **ghcr_image**：你希望推送到 GHCR.IO 的镜像名称，可以自己定义一个，比如 `myimage`。
-
-5. 填写好参数后，点击 "**Run workflow**" 按钮。GitHub Actions 会开始自动运行，将你指定的 DockerHub 镜像同步到 GHCR.IO。
-
-#### 参数填写示例：
-
-- **dockerhub_image**: `nginx`
-- **tag**: `latest`
-- **ghcr_image**: `my-nginx`
-
-完成后，GitHub Actions 会自动拉取 DockerHub 镜像，并推送到 GHCR.IO。
-
-### 3. 国内加速镜像拉取
-
-为了加速国内的镜像下载速度，可以使用南京大学的开源镜像站。你只需要在拉取镜像时，将 `ghcr.io` 替换为 `ghcr.nju.edu.cn`：
-
-```bash
-docker pull ghcr.nju.edu.cn/<your-username>/<your-image>:<tag>
+```text
+ghcr.io/<仓库所有者的小写用户名>/<ghcr_image的小写名称>:<tag>
 ```
 
-这样可以大幅提升国内环境下从 GHCR.IO 拉取镜像的速度。
+例如，`ALTIOU` 账号下的仓库输入 `nginx`、`latest`、`my-nginx`，输出地址为：
 
-## 优势
+```sh
+docker pull ghcr.io/altiou/my-nginx:latest
+```
 
-- **防止镜像撤回或封禁**：同步到 GHCR.IO 私有仓库，即使镜像被撤回也不会影响使用。
-- **免费使用 GitHub 容器服务**：每月 2000 分钟的免费私有仓库运行时长，或公有仓库无限制时长。
-- **国内镜像站加速**：使用南京大学镜像站，让国内拉取 GHCR.IO 镜像更快更稳定。
+## 权限与可见性
+
+工作流显式申请 `contents: read` 和 `packages: write`，使用 GitHub 为本次运行生成的 `GITHUB_TOKEN` 登录 GHCR。
+
+新建的 GHCR 包可能默认是私有的。需要其他人匿名拉取时，请在包的设置中检查可见性；私有包拉取则需要相应身份和权限。若目标包已经存在，需要确保当前仓库有该包的写入权限。
+
+## 复制范围
+
+当前实现使用 `docker pull/tag/push`，复制 GitHub Runner 当前平台选中的镜像，**不会自动复制上游全部架构**。需要 ARM 镜像或完整多架构清单时，应使用对应平台或支持多架构复制的工具。
+
+复制完成后，目标镜像仍受 GHCR 的可见性、容量和账号权限规则管理。相同目标标签可被后续运行覆盖，必要时使用固定版本标签。
+
+## GitHub Actions 用量
+
+公开仓库使用标准 GitHub 托管 Runner 时，运行器用量免费；私有仓库的包含额度、额外用量及存储按当前账号方案计费。运行时长和其他服务限制仍适用。
+
+- [GitHub Actions 计费说明](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+- [使用 GITHUB_TOKEN 发布容器镜像](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images)
+- [GHCR 认证和包可见性](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+
+## 来源
+
+原项目说明引用了 [foss-android/dockerhub2ghcr.io](https://github.com/foss-android/dockerhub2ghcr.io)。本仓库保留该来源说明。
