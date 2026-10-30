@@ -1,48 +1,86 @@
-name: 将DockerHub镜像复制到GHCR.IO
+name: 将 DockerHub 镜像复制到 GHCR
 
 on:
   workflow_dispatch:
     inputs:
       dockerhub_image:
-        description: '要拉取的 DockerHub 镜像名称'
+        description: 'DockerHub 镜像名，不含标签，例如 nginx 或 library/nginx'
         required: true
-        default: 'nginx'
+        default: nginx
       tag:
-        description: 'Docker 镜像标签（默认：latest）'
+        description: '镜像标签，留空使用 latest'
         required: false
-        default: 'latest'
+        default: latest
       ghcr_image:
-        description: '推送到GHCR.IO的镜像名称'
+        description: 'GHCR 镜像名；会转换为小写'
         required: true
-        default: 'myimage'
+        default: myimage
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ inputs.ghcr_image }}  
+permissions:
+  contents: read
 
 jobs:
   mirror:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SOURCE_IMAGE: ${{ inputs.dockerhub_image }}
+      IMAGE_TAG: ${{ inputs.tag }}
+      TARGET_NAME: ${{ inputs.ghcr_image }}
+      REPOSITORY_OWNER: ${{ github.repository_owner }}
 
     steps:
-      - name: 登录到GitHub容器注册表
+      - name: 检查参数并生成镜像地址
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+          component='[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*'
+          source_pattern="^${component}(/${component})?$"
+          target_pattern="^${component}(/${component})*$"
+          source_name="$SOURCE_IMAGE"
+          target_name="$(printf '%s' "$TARGET_NAME" | tr '[:upper:]' '[:lower:]')"
+          image_tag="${IMAGE_TAG:-latest}"
+          owner="$(printf '%s' "$REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+
+          if [[ ! "$source_name" =~ $source_pattern ]]; then
+            echo '::error::dockerhub_image 必须是小写 DockerHub 镜像名，不含仓库地址、标签或空格。'
+            exit 1
+          fi
+          if [[ ! "$target_name" =~ $target_pattern ]]; then
+            echo '::error::ghcr_image 必须是有效镜像名，不含仓库地址、标签或空格。'
+            exit 1
+          fi
+          if [[ ! "$image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo '::error::tag 格式不正确。'
+            exit 1
+          fi
+
+          printf 'source=%s:%s\n' "$source_name" "$image_tag" >> "$GITHUB_OUTPUT"
+          printf 'target=ghcr.io/%s/%s:%s\n' "$owner" "$target_name" "$image_tag" >> "$GITHUB_OUTPUT"
+
+      - name: 登录 GitHub 容器注册表
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}  
-          password: ${{ secrets.GITHUB_TOKEN }} 
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 从DockerHub拉取Docker镜像
-        run: |
-          docker pull ${{ inputs.dockerhub_image }}:${{ inputs.tag }}
+      - name: 从 DockerHub 拉取镜像
+        env:
+          SOURCE_REF: ${{ steps.images.outputs.source }}
+        run: docker pull "$SOURCE_REF"
 
-      - name: 设置小写的 GitHub 用户名
-        run: echo "ACTOR_LOWER=$(echo '${{ github.actor }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
-      
-      - name: 为GitHub容器注册表标记Docker镜像
-        run: |
-          docker tag ${{ inputs.dockerhub_image }}:${{ inputs.tag }} ${{ env.REGISTRY }}/${{ env.ACTOR_LOWER }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
-      
-      - name: 将Docker镜像推送到GitHub容器注册表
-        run: |
-          docker push ${{ env.REGISTRY }}/${{ env.ACTOR_LOWER }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+      - name: 标记目标镜像
+        env:
+          SOURCE_REF: ${{ steps.images.outputs.source }}
+          TARGET_REF: ${{ steps.images.outputs.target }}
+        run: docker tag "$SOURCE_REF" "$TARGET_REF"
+
+      - name: 推送到 GHCR
+        env:
+          TARGET_REF: ${{ steps.images.outputs.target }}
+        run: docker push "$TARGET_REF"
